@@ -88,5 +88,46 @@ def get_user_symptoms(user_id):
         'description': symptom.description,
         'timestamp': symptom.timestamp
     } for symptom in symptoms])
+
+# PUT: Update an existing user
+@app.route('/users/<int:user_id>', methods=['PUT'])
+def update_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    # Get the data from the request
+    data = request.get_json()
+    user.username = data.get('username', user.username)  # If key is not provided, keep the current value
+    user.password = data.get('password', user.password)  
+    user.age = data.get('age', user.age)
+    user.gender = data.get('gender', user.gender)
+    user.location = data.get('location', user.location)
+
+    db.session.commit()
+    return jsonify({'message': 'User updated successfully'}), 200
+
+# DELETE: Delete an existing user
+@app.route('/users/<int:user_id>', methods=['DELETE'])
+def delete_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({'message': 'User deleted successfully'}), 200
+
+# DELETE: Delete a specific symptom for a user
+@app.route('/users/<int:user_id>/symptoms/<int:symptom_id>', methods=['DELETE'])
+def delete_symptom(user_id, symptom_id):
+    symptom = Symptom.query.filter_by(userid=user_id, id=symptom_id).first()
+    if not symptom:
+        return jsonify({'message': 'Symptom not found'}), 404
+
+    db.session.delete(symptom)
+    db.session.commit()
+    return jsonify({'message': 'Symptom deleted successfully'}), 200
+
 if __name__ == '__main__':
     app.run(debug=True)

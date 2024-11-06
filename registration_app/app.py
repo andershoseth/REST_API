@@ -1,22 +1,29 @@
 from flask import Flask, jsonify,request
 from flask_restful import Api
-from flask_jwt_extended import JWTManager
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_sqlalchemy import SQLAlchemy
 from models import db, User, Symptom
+from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import timedelta
 
 
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-app.config['SECRET_KEY'] = 'your-secret-key'  # Replace with a secure key
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'  # Try SQLite for now
+app.config['SECRET_KEY'] = 'your-secret-key'  # Change this to a secure key
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['JWT_SECRET_KEY'] = 'jwt-secret-key'  # Change this to a secure key
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 
 db.init_app(app)
 with app.app_context():
     db.create_all()
 
 
+jwt = JWTManager(app)
 api = Api(app)
 
 
@@ -25,7 +32,14 @@ api = Api(app)
 
 @app.route('/add_test_user', methods=['GET'])
 def add_test_user():
-    test_user = User(username="testuser", password="password123", age=30, gender="M", location="Test City")
+    hashed_password = generate_password_hash("password123")
+    test_user = User(
+        username="testuser", 
+        password=hashed_password,  # Now using hashed password
+        age=30, 
+        gender="M", 
+        location="Test City"
+    )
     db.session.add(test_user)
     db.session.commit()
     return "Test user added!"
@@ -36,6 +50,79 @@ def get_users():
     users = User.query.all()
     user_list = [{"id": user.id, "username": user.username, "age": user.age, "gender": user.gender, "location": user.location} for user in users]
     return jsonify(user_list)
+
+
+@app.route('/auth/login', methods=['POST'])
+def login():
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+
+        if not username or not password:
+            return jsonify({'message': 'Missing username or password'}), 400
+
+        user = User.query.filter_by(username=username).first()
+
+        if user and check_password_hash(user.password, password):
+            access_token = create_access_token(identity=user.id)
+            return jsonify({
+                'token': access_token,
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'age': user.age,
+                    'gender': user.gender,
+                    'location': user.location
+                }
+            }), 200
+        
+        return jsonify({'message': 'Invalid username or password'}), 401
+
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
+
+
+@app.route('/auth/register', methods=['POST'])
+def register():
+    try:
+        data = request.get_json()
+        
+        # Check if username already exists
+        if User.query.filter_by(username=data['username']).first():
+            return jsonify({'message': 'Username already exists'}), 400
+
+        # Create new user with hashed password
+        hashed_password = generate_password_hash(data['password'])
+        new_user = User(
+            username=data['username'],
+            password=hashed_password,
+            age=data.get('age'),
+            gender=data.get('gender'),
+            location=data.get('location')
+        )
+
+        db.session.add(new_user)
+        db.session.commit()
+
+        # Create access token
+        access_token = create_access_token(identity=new_user.id)
+        
+        return jsonify({
+            'message': 'User created successfully',
+            'token': access_token,
+            'user': {
+                'id': new_user.id,
+                'username': new_user.username,
+                'age': new_user.age,
+                'gender': new_user.gender,
+                'location': new_user.location
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': str(e)}), 500
 
 # 1. POST: Create a new user
 @app.route('/create_user', methods=['POST'])
@@ -75,7 +162,8 @@ def add_symptom(user_id):
 
 
 # GET: Get all symptoms for a user
-@app.route('/users/<int:user_id>/symptoms', methods=['GET'])
+@app.route('/users/<int:user_id>/symptoms', methods=['GET', 'OPTIONS'])
+@jwt_required()
 def get_user_symptoms(user_id):
     user = User.query.get(user_id)
     if not user:
@@ -128,6 +216,8 @@ def delete_symptom(user_id, symptom_id):
     db.session.delete(symptom)
     db.session.commit()
     return jsonify({'message': 'Symptom deleted successfully'}), 200
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -206,18 +206,56 @@ def delete_user(user_id):
     db.session.commit()
     return jsonify({'message': 'User deleted successfully'}), 200
 
-# DELETE: Delete a specific symptom for a user
-@app.route('/users/<int:user_id>/symptoms/<int:symptom_id>', methods=['DELETE'])
+@app.route('/users/<int:user_id>/symptoms/<int:symptom_id>', methods=['DELETE', 'OPTIONS'])
 def delete_symptom(user_id, symptom_id):
-    symptom = Symptom.query.filter_by(userid=user_id, id=symptom_id).first()
-    if not symptom:
-        return jsonify({'message': 'Symptom not found'}), 404
+    if request.method == 'OPTIONS':
+        return '', 200  # Allow the OPTIONS request to pass through
 
-    db.session.delete(symptom)
-    db.session.commit()
-    return jsonify({'message': 'Symptom deleted successfully'}), 200
+    @jwt_required()
+    def inner_delete_symptom():
+        if get_jwt_identity() != user_id:
+            return jsonify({'message': 'Unauthorized access'}), 403
 
+        symptom = Symptom.query.filter_by(userid=user_id, id=symptom_id).first()
+        if not symptom:
+            return jsonify({'message': 'Symptom not found'}), 404
 
+        try:
+            db.session.delete(symptom)
+            db.session.commit()
+            return jsonify({'message': 'Symptom deleted successfully'}), 200
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'message': str(e)}), 500
+
+    return inner_delete_symptom()
+
+@app.route('/users/<int:user_id>/symptoms/<int:symptom_id>', methods=['PUT', 'OPTIONS'])
+def update_symptom(user_id, symptom_id):
+    if request.method == 'OPTIONS':
+        return '', 200  # Allow the OPTIONS request to pass through
+
+    @jwt_required()
+    def inner_update_symptom():
+        if get_jwt_identity() != user_id:
+            return jsonify({'message': 'Unauthorized access'}), 403
+
+        symptom = Symptom.query.filter_by(userid=user_id, id=symptom_id).first()
+        if not symptom:
+            return jsonify({'message': 'Symptom not found'}), 404
+
+        data = request.get_json()
+        symptom.label = data.get('label', symptom.label)
+        symptom.description = data.get('description', symptom.description)
+
+        try:
+            db.session.commit()
+            return jsonify({'message': 'Symptom updated successfully'}), 200
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'message': str(e)}), 500
+
+    return inner_update_symptom()
 
 if __name__ == '__main__':
     app.run(debug=True)

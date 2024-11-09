@@ -7,8 +7,9 @@ from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import timedelta
 from datetime import datetime
-
-
+from collections import Counter
+from werkzeug.security import generate_password_hash
+import random
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
@@ -315,6 +316,103 @@ def get_activity_logs(user_id):
         'timestamp': log.timestamp.isoformat(),
         'status_code': log.status_code
     } for log in logs]), 200
+
+
+
+@app.route('/symptoms/patterns', methods=['GET'])
+#@jwt_required()
+def identify_common_symptom_patterns():
+    # Hent alle brukere og deres symptomer
+    users = User.query.all()
+    symptom_combinations = []
+
+    for user in users:
+        # Hent alle symptomer for hver bruker
+        user_symptoms = Symptom.query.filter_by(userid=user.id).all()
+        # Lag en liste over symptometiketter
+        symptom_labels = [symptom.label for symptom in user_symptoms]
+
+        # Hvis brukeren har mer enn ett symptom, legg til kombinasjonen
+        if len(symptom_labels) > 1:
+
+            sorted_labels = tuple(sorted(symptom_labels))
+            symptom_combinations.append(sorted_labels)
+
+    # Bruk Counter til å finne de vanligste kombinasjonene
+    combination_counts = Counter(symptom_combinations)
+
+    # Finn de 5 mest vanlige kombinasjonene
+    most_common_patterns = combination_counts.most_common(5)
+
+    # Returner resultatene som JSON
+    return jsonify({'most_common_patterns': most_common_patterns}), 200
+
+@app.route('/fill_database', methods=['GET'])
+def fill_database():
+    try:
+        # Delete previous data to avoid duplicates
+        db.session.query(Symptom).delete()
+        db.session.query(User).delete()
+        db.session.commit()
+
+        # Define some possible usernames, locations, symptoms, and genders
+        male_names = ['Bob', 'Charlie', 'David', 'Frank', 'Hank', 'Jack', 'Leo', 'Oscar', 'Paul', 'Quinn', 'Steve', 'Victor', 'Xander', 'Zack', 'Oliver', 'Liam', 'Noah', 'Lucas', 'Ethan', 'James', 'Benjamin', 'Alexander', 'William', 'Henry', 'Sebastian']
+        female_names = ['Alice', 'Eva', 'Grace', 'Ivy', 'Karen', 'Mona', 'Nina', 'Rachel', 'Tina', 'Uma', 'Wendy', 'Yara', 'Sophia', 'Emma', 'Ava', 'Mia', 'Amelia', 'Isabella', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Ella', 'Chloe']
+        locations = ['Oslo', 'Bergen', 'Trondheim', 'Stavanger', 'Kristiansand', 'Drammen', 'Tromsø', 'Bodø']
+        genders = ['M', 'F']
+        symptom_labels = [
+            'fever', 'cough', 'headache', 'fatigue', 'sore throat', 'muscle pain', 'nausea', 'shortness of breath',
+            'runny nose', 'loss of taste', 'loss of smell', 'diarrhea'
+        ]
+
+        # Add 50 test users with random attributes
+        users = []
+        for i in range(100):
+            gender = random.choice(genders)
+            if gender == 'M':
+                username = f"{random.choice(male_names)}_{i}"
+            else:
+                username = f"{random.choice(female_names)}_{i}"
+
+            user = User(
+                username=username,
+                password=generate_password_hash('password123'),
+                age=random.randint(18, 65),
+                gender=gender,
+                location=random.choice(locations)
+            )
+            users.append(user)
+
+        # Add users to the database
+        db.session.add_all(users)
+        db.session.commit()
+
+        # Add symptoms for each user
+        symptoms = []
+        for user in users:
+            # Each user will have between 1 and 3 symptoms
+            num_symptoms = random.randint(1, 3)
+            user_symptom_labels = random.sample(symptom_labels, num_symptoms)
+
+            for index, label in enumerate(user_symptom_labels):
+                description = f'{label} experienced by {user.username} on day {index + 1}'
+                symptom = Symptom(
+                    userid=user.id,
+                    label=label,
+                    description=description
+                )
+                symptoms.append(symptom)
+
+        # Add symptoms to the database
+        db.session.add_all(symptoms)
+        db.session.commit()
+
+        return jsonify({'message': 'Database filled with 50 users and sample data successfully!'}), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True)

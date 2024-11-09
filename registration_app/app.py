@@ -2,10 +2,11 @@ from flask import Flask, jsonify,request
 from flask_restful import Api
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_sqlalchemy import SQLAlchemy
-from models import db, User, Symptom
+from models import db, User, Symptom,ActivityLog
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import timedelta
+from datetime import datetime
 
 
 
@@ -137,6 +138,8 @@ def add_user():
     )
     db.session.add(new_user)
     db.session.commit()
+   
+    log_user_activity("Create User", 201)
     return jsonify({'message': 'User created successfully'}), 201
 
 # 2. POST: Add a symptom for a specific user
@@ -156,6 +159,7 @@ def add_symptom(user_id):
     try:
         db.session.add(new_symptom)
         db.session.commit()
+        log_user_activity("Add Symptom", 201)
         return jsonify({'message': 'Symptom added successfully'}), 201
     except Exception as e:
         return jsonify({'message': str(e)}), 400
@@ -170,6 +174,8 @@ def get_user_symptoms(user_id):
         return jsonify({'message': 'User not found'}), 404
 
     symptoms = Symptom.query.filter_by(userid=user_id).all()
+    log_user_activity("Get User Symptoms", 200)
+
     return jsonify([{
         'id': symptom.id,
         'label': symptom.label,
@@ -193,6 +199,8 @@ def update_user(user_id):
     user.location = data.get('location', user.location)
 
     db.session.commit()
+    log_user_activity("Update User", 200)
+
     return jsonify({'message': 'User updated successfully'}), 200
 
 # DELETE: Delete an existing user
@@ -204,6 +212,8 @@ def delete_user(user_id):
 
     db.session.delete(user)
     db.session.commit()
+    log_user_activity("Delete User", 200)
+
     return jsonify({'message': 'User deleted successfully'}), 200
 
 @app.route('/users/<int:user_id>/symptoms/<int:symptom_id>', methods=['DELETE', 'OPTIONS'])
@@ -218,11 +228,15 @@ def delete_symptom(user_id, symptom_id):
 
         symptom = Symptom.query.filter_by(userid=user_id, id=symptom_id).first()
         if not symptom:
+            log_user_activity("Delete Symptom - Not Found", 404)
+
             return jsonify({'message': 'Symptom not found'}), 404
 
         try:
             db.session.delete(symptom)
             db.session.commit()
+       
+            log_user_activity("Delete Symptom", 200)
             return jsonify({'message': 'Symptom deleted successfully'}), 200
         except Exception as e:
             db.session.rollback()
@@ -250,12 +264,57 @@ def update_symptom(user_id, symptom_id):
 
         try:
             db.session.commit()
+            log_user_activity("Update Symptom", 200)
+
             return jsonify({'message': 'Symptom updated successfully'}), 200
         except Exception as e:
             db.session.rollback()
             return jsonify({'message': str(e)}), 500
 
     return inner_update_symptom()
+
+
+
+def log_user_activity(action, status_code):
+    """Logger brukerens aktivitet til ActivityLog-tabellen."""
+    try:
+        user_id = get_jwt_identity()  # Hent innlogget bruker-ID fra JWT
+        if user_id:
+            new_log = ActivityLog(
+                user_id=user_id,
+                action=action,  # Beskriv handlingen 
+                endpoint=request.path,  
+                method=request.method,  # HTTP-metode
+                ip_address=request.remote_addr,  # Brukerens IP-adresse
+                timestamp=datetime.utcnow(),  # Når handlingen skjedde
+                status_code=status_code  # HTTP-statuskode for svaret
+            )
+            db.session.add(new_log)
+            db.session.commit()
+    except Exception as e:
+        # Eventuell feilhåndtering/logging av feil
+        print(f"Failed to log activity: {str(e)}")
+
+
+@app.route('/activity_logs/<int:user_id>', methods=['GET'])
+def get_activity_logs(user_id):
+    """Hent aktivitetslogger for en spesifikk bruker uten autentisering."""
+    
+    # Hent logger fra ActivityLog-tabellen basert på user_id
+    logs = ActivityLog.query.filter_by(user_id=user_id).order_by(ActivityLog.timestamp.desc()).all()
+
+    if not logs:
+        return jsonify({'message': f'No activity logs found for user ID {user_id}'}), 404
+
+    # Returner loggene som JSON
+    return jsonify([{
+        'action': log.action,
+        'endpoint': log.endpoint,
+        'method': log.method,
+        'ip_address': log.ip_address,
+        'timestamp': log.timestamp.isoformat(),
+        'status_code': log.status_code
+    } for log in logs]), 200
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -25,3 +25,19 @@ class Symptom(db.Model):
 
     # Unique constraint to avoid duplicate symptoms for a user
     __table_args__ = (db.UniqueConstraint('userid', 'description', name='unique_user_symptom'),)
+
+class ActivityLog(db.Model):
+    __tablename__ = 'activity_logs'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)  # Relaterer til bruker
+    action = db.Column(db.String(255), nullable=False)  # Hva brukeren gjorde
+    endpoint = db.Column(db.String(100), nullable=False)  # API-endepunkt
+    method = db.Column(db.String(10), nullable=False)  # HTTP-metode (GET, POST, osv.)
+    ip_address = db.Column(db.String(45))  # IP-adresse til brukeren
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)  # Når handlingen skjedde
+    status_code = db.Column(db.Integer)  # HTTP-statuskoden for svaret
+
+
+
+    def __repr__(self):
+        return f"<ActivityLog user_id={self.user_id} action='{self.action}' endpoint='{self.endpoint}'>"

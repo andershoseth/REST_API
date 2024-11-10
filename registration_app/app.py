@@ -1,14 +1,12 @@
-from flask import Flask, jsonify,request
+from flask import Flask, jsonify, request, url_for
 from flask_restful import Api
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_sqlalchemy import SQLAlchemy
-from models import db, User, Symptom,ActivityLog
+from models import db, User, Symptom, ActivityLog
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import timedelta
-from datetime import datetime
+from datetime import timedelta, datetime
 from collections import Counter
-from werkzeug.security import generate_password_hash
 import random
 
 app = Flask(__name__)
@@ -24,35 +22,50 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
-
 jwt = JWTManager(app)
 api = Api(app)
 
 
-# API resource routes go here:
-# api.add_resource(UserRegistration, '/registration')
-
-@app.route('/add_test_user', methods=['GET'])
-def add_test_user():
-    hashed_password = generate_password_hash("password123")
-    test_user = User(
-        username="testuser", 
-        password=hashed_password,  # Now using hashed password
-        age=30, 
-        gender="M", 
-        location="Test City"
-    )
-    db.session.add(test_user)
-    db.session.commit()
-    return "Test user added!"
 
 # Route to retrieve all users
 @app.route('/get_users', methods=['GET'])
 def get_users():
     users = User.query.all()
-    user_list = [{"id": user.id, "username": user.username, "age": user.age, "gender": user.gender, "location": user.location} for user in users]
+    user_list = []
+    for user in users:
+        user_dict = {
+            "id": user.id,
+            "username": user.username,
+            "age": user.age,
+            "gender": user.gender,
+            "location": user.location,
+            "links": {
+                "self": url_for('get_user', user_id=user.id, _external=True),
+                "symptoms": url_for('get_user_symptoms', user_id=user.id, _external=True)
+            }
+        }
+        user_list.append(user_dict)
     return jsonify(user_list)
 
+@app.route('/users/<int:user_id>', methods=['GET'])
+def get_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+    user_dict = {
+        "id": user.id,
+        "username": user.username,
+        "age": user.age,
+        "gender": user.gender,
+        "location": user.location,
+        "links": {
+            "self": url_for('get_user', user_id=user.id, _external=True),
+            "symptoms": url_for('get_user_symptoms', user_id=user.id, _external=True),
+            "update": url_for('update_user', user_id=user.id, _external=True),
+            "delete": url_for('delete_user', user_id=user.id, _external=True)
+        }
+    }
+    return jsonify(user_dict)
 
 @app.route('/auth/login', methods=['POST'])
 def login():
@@ -75,15 +88,18 @@ def login():
                     'username': user.username,
                     'age': user.age,
                     'gender': user.gender,
-                    'location': user.location
+                    'location': user.location,
+                    'links': {
+                        'self': url_for('get_user', user_id=user.id, _external=True),
+                        'symptoms': url_for('get_user_symptoms', user_id=user.id, _external=True)
+                    }
                 }
             }), 200
-        
+
         return jsonify({'message': 'Invalid username or password'}), 401
 
     except Exception as e:
         return jsonify({'message': str(e)}), 500
-
 
 @app.route('/auth/register', methods=['POST'])
 def register():
@@ -118,7 +134,11 @@ def register():
                 'username': new_user.username,
                 'age': new_user.age,
                 'gender': new_user.gender,
-                'location': new_user.location
+                'location': new_user.location,
+                'links': {
+                    'self': url_for('get_user', user_id=new_user.id, _external=True),
+                    'symptoms': url_for('get_user_symptoms', user_id=new_user.id, _external=True)
+                }
             }
         }), 201
 
@@ -126,7 +146,6 @@ def register():
         db.session.rollback()
         return jsonify({'message': str(e)}), 500
 
-# 1. POST: Create a new user
 @app.route('/create_user', methods=['POST'])
 def add_user():
     data = request.get_json()
@@ -143,7 +162,6 @@ def add_user():
     log_user_activity("Create User", 201)
     return jsonify({'message': 'User created successfully'}), 201
 
-# 2. POST: Add a symptom for a specific user
 @app.route('/users/<int:user_id>/symptoms', methods=['POST'])
 def add_symptom(user_id):
     user = User.query.get(user_id)
@@ -161,10 +179,23 @@ def add_symptom(user_id):
         db.session.add(new_symptom)
         db.session.commit()
         log_user_activity("Add Symptom", 201)
-        return jsonify({'message': 'Symptom added successfully'}), 201
+
+        symptom_dict = {
+            'id': new_symptom.id,
+            'label': new_symptom.label,
+            'description': new_symptom.description,
+            'timestamp': new_symptom.timestamp.isoformat(),
+            'links': {
+                'self': url_for('get_symptom', user_id=user_id, symptom_id=new_symptom.id, _external=True),
+                'user': url_for('get_user', user_id=user_id, _external=True),
+                'update': url_for('update_symptom', user_id=user_id, symptom_id=new_symptom.id, _external=True),
+                'delete': url_for('delete_symptom', user_id=user_id, symptom_id=new_symptom.id, _external=True)
+            }
+        }
+
+        return jsonify(symptom_dict), 201
     except Exception as e:
         return jsonify({'message': str(e)}), 400
-
 
 # GET: Get all symptoms for a user
 @app.route('/users/<int:user_id>/symptoms', methods=['GET', 'OPTIONS'])
@@ -177,12 +208,43 @@ def get_user_symptoms(user_id):
     symptoms = Symptom.query.filter_by(userid=user_id).all()
     log_user_activity("Get User Symptoms", 200)
 
-    return jsonify([{
+    symptoms_list = []
+    for symptom in symptoms:
+        symptom_dict = {
+            'id': symptom.id,
+            'label': symptom.label,
+            'description': symptom.description,
+            'timestamp': symptom.timestamp.isoformat(),
+            'links': {
+                'self': url_for('get_symptom', user_id=user_id, symptom_id=symptom.id, _external=True),
+                'user': url_for('get_user', user_id=user_id, _external=True),
+                'update': url_for('update_symptom', user_id=user_id, symptom_id=symptom.id, _external=True),
+                'delete': url_for('delete_symptom', user_id=user_id, symptom_id=symptom.id, _external=True)
+            }
+        }
+        symptoms_list.append(symptom_dict)
+
+    return jsonify(symptoms_list)
+
+@app.route('/users/<int:user_id>/symptoms/<int:symptom_id>', methods=['GET'])
+def get_symptom(user_id, symptom_id):
+    symptom = Symptom.query.filter_by(userid=user_id, id=symptom_id).first()
+    if not symptom:
+        return jsonify({'message': 'Symptom not found'}), 404
+
+    symptom_dict = {
         'id': symptom.id,
         'label': symptom.label,
         'description': symptom.description,
-        'timestamp': symptom.timestamp
-    } for symptom in symptoms])
+        'timestamp': symptom.timestamp.isoformat(),
+        'links': {
+            'self': url_for('get_symptom', user_id=user_id, symptom_id=symptom.id, _external=True),
+            'user': url_for('get_user', user_id=user_id, _external=True),
+            'update': url_for('update_symptom', user_id=user_id, symptom_id=symptom.id, _external=True),
+            'delete': url_for('delete_symptom', user_id=user_id, symptom_id=symptom.id, _external=True)
+        }
+    }
+    return jsonify(symptom_dict)
 
 # PUT: Update an existing user
 @app.route('/users/<int:user_id>', methods=['PUT'])
@@ -193,7 +255,7 @@ def update_user(user_id):
 
     # Get the data from the request
     data = request.get_json()
-    user.username = data.get('username', user.username)  # If key is not provided, keep the current value
+    user.username = data.get('username', user.username)
     user.password = data.get('password', user.password)  
     user.age = data.get('age', user.age)
     user.gender = data.get('gender', user.gender)
@@ -202,7 +264,21 @@ def update_user(user_id):
     db.session.commit()
     log_user_activity("Update User", 200)
 
-    return jsonify({'message': 'User updated successfully'}), 200
+    user_dict = {
+        "id": user.id,
+        "username": user.username,
+        "age": user.age,
+        "gender": user.gender,
+        "location": user.location,
+        "links": {
+            "self": url_for('get_user', user_id=user.id, _external=True),
+            "symptoms": url_for('get_user_symptoms', user_id=user.id, _external=True),
+            "update": url_for('update_user', user_id=user.id, _external=True),
+            "delete": url_for('delete_user', user_id=user.id, _external=True)
+        }
+    }
+
+    return jsonify({'message': 'User updated successfully', 'user': user_dict}), 200
 
 # DELETE: Delete an existing user
 @app.route('/users/<int:user_id>', methods=['DELETE'])
@@ -230,7 +306,6 @@ def delete_symptom(user_id, symptom_id):
         symptom = Symptom.query.filter_by(userid=user_id, id=symptom_id).first()
         if not symptom:
             log_user_activity("Delete Symptom - Not Found", 404)
-
             return jsonify({'message': 'Symptom not found'}), 404
 
         try:
@@ -267,47 +342,54 @@ def update_symptom(user_id, symptom_id):
             db.session.commit()
             log_user_activity("Update Symptom", 200)
 
-            return jsonify({'message': 'Symptom updated successfully'}), 200
+            symptom_dict = {
+                'id': symptom.id,
+                'label': symptom.label,
+                'description': symptom.description,
+                'timestamp': symptom.timestamp.isoformat(),
+                'links': {
+                    'self': url_for('get_symptom', user_id=user_id, symptom_id=symptom.id, _external=True),
+                    'user': url_for('get_user', user_id=user_id, _external=True),
+                    'update': url_for('update_symptom', user_id=user_id, symptom_id=symptom.id, _external=True),
+                    'delete': url_for('delete_symptom', user_id=user_id, symptom_id=symptom.id, _external=True)
+                }
+            }
+
+            return jsonify({'message': 'Symptom updated successfully', 'symptom': symptom_dict}), 200
         except Exception as e:
             db.session.rollback()
             return jsonify({'message': str(e)}), 500
 
     return inner_update_symptom()
 
-
-
 def log_user_activity(action, status_code):
-    """Logger brukerens aktivitet til ActivityLog-tabellen."""
+    """Logs the user's activity to the ActivityLog table."""
     try:
-        user_id = get_jwt_identity()  # Hent innlogget bruker-ID fra JWT
+        user_id = get_jwt_identity()  # Get logged-in user ID from JWT
         if user_id:
             new_log = ActivityLog(
                 user_id=user_id,
-                action=action,  # Beskriv handlingen 
+                action=action,  
                 endpoint=request.path,  
-                method=request.method,  # HTTP-metode
-                ip_address=request.remote_addr,  # Brukerens IP-adresse
-                timestamp=datetime.utcnow(),  # Når handlingen skjedde
-                status_code=status_code  # HTTP-statuskode for svaret
+                method=request.method,  
+                ip_address=request.remote_addr,  
+                timestamp=datetime.utcnow(),  
+                status_code=status_code  
             )
             db.session.add(new_log)
             db.session.commit()
     except Exception as e:
-        # Eventuell feilhåndtering/logging av feil
+        # Error handling/logging
         print(f"Failed to log activity: {str(e)}")
-
 
 @app.route('/activity_logs/<int:user_id>', methods=['GET'])
 def get_activity_logs(user_id):
-    """Hent aktivitetslogger for en spesifikk bruker uten autentisering."""
-    
-    # Hent logger fra ActivityLog-tabellen basert på user_id
+    """Retrieve activity logs for a specific user without authentication."""
     logs = ActivityLog.query.filter_by(user_id=user_id).order_by(ActivityLog.timestamp.desc()).all()
 
     if not logs:
         return jsonify({'message': f'No activity logs found for user ID {user_id}'}), 404
 
-    # Returner loggene som JSON
     return jsonify([{
         'action': log.action,
         'endpoint': log.endpoint,
@@ -317,35 +399,30 @@ def get_activity_logs(user_id):
         'status_code': log.status_code
     } for log in logs]), 200
 
-
-
 @app.route('/symptoms/patterns', methods=['GET'])
-#@jwt_required()
 def identify_common_symptom_patterns():
-    # Hent alle brukere og deres symptomer
     users = User.query.all()
     symptom_combinations = []
 
     for user in users:
-        # Hent alle symptomer for hver bruker
         user_symptoms = Symptom.query.filter_by(userid=user.id).all()
-        # Lag en liste over symptometiketter
         symptom_labels = [symptom.label for symptom in user_symptoms]
 
-        # Hvis brukeren har mer enn ett symptom, legg til kombinasjonen
         if len(symptom_labels) > 1:
-
             sorted_labels = tuple(sorted(symptom_labels))
             symptom_combinations.append(sorted_labels)
 
-    # Bruk Counter til å finne de vanligste kombinasjonene
     combination_counts = Counter(symptom_combinations)
-
-    # Finn de 5 mest vanlige kombinasjonene
     most_common_patterns = combination_counts.most_common(5)
 
-    # Returner resultatene som JSON
-    return jsonify({'most_common_patterns': most_common_patterns}), 200
+    patterns = []
+    for combo, count in most_common_patterns:
+        patterns.append({
+            'symptoms': list(combo),
+            'count': count
+        })
+
+    return jsonify({'most_common_patterns': patterns}), 200
 
 @app.route('/fill_database', methods=['GET'])
 def fill_database():
@@ -365,7 +442,7 @@ def fill_database():
             'runny nose', 'loss of taste', 'loss of smell', 'diarrhea'
         ]
 
-        # Add 50 test users with random attributes
+        # Add 100 test users with random attributes
         users = []
         for i in range(100):
             gender = random.choice(genders)
@@ -390,7 +467,6 @@ def fill_database():
         # Add symptoms for each user
         symptoms = []
         for user in users:
-            # Each user will have between 1 and 3 symptoms
             num_symptoms = random.randint(1, 3)
             user_symptom_labels = random.sample(symptom_labels, num_symptoms)
 
@@ -407,12 +483,11 @@ def fill_database():
         db.session.add_all(symptoms)
         db.session.commit()
 
-        return jsonify({'message': 'Database filled with 50 users and sample data successfully!'}), 201
+        return jsonify({'message': 'Database filled with 100 users and sample data successfully!'}), 201
 
     except Exception as e:
         db.session.rollback()
         return jsonify({'message': str(e)}), 500
-
 
 if __name__ == '__main__':
     app.run(debug=True)

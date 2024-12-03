@@ -382,6 +382,7 @@ def log_user_activity(action, status_code):
         # Error handling/logging
         print(f"Failed to log activity: {str(e)}")
 
+# Shows the activity logs for a specific user
 @app.route('/activity_logs/<int:user_id>', methods=['GET'])
 def get_activity_logs(user_id):
     """Retrieve activity logs for a specific user without authentication."""
@@ -399,6 +400,7 @@ def get_activity_logs(user_id):
         'status_code': log.status_code
     } for log in logs]), 200
 
+# Pattern recognition, finds the most common combinations of symptoms
 @app.route('/symptoms/patterns', methods=['GET'])
 def identify_common_symptom_patterns():
     users = User.query.all()

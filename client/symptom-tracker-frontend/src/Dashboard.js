@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const Dashboard = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -15,56 +15,112 @@ const Dashboard = () => {
     location: '',
   });
   const [error, setError] = useState('');
-
-  // New state variables for editing symptoms
   const [isEditing, setIsEditing] = useState(false);
   const [editSymptomData, setEditSymptomData] = useState({
     id: null,
     label: '',
     description: '',
   });
+  const [newSymptomData, setNewSymptomData] = useState({
+    label: '',
+    description: '',
+  });
+  const [commonPatterns, setCommonPatterns] = useState([]);
 
-  // Check for existing token on component mount
+
+  const fetchPatterns = useCallback(async () => {
+    try {
+      const response = await fetch('http://localhost:5000/symptoms/patterns', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCommonPatterns(data.most_common_patterns);
+      } else {
+        const data = await response.json();
+        throw new Error(data.message || 'Failed to fetch patterns');
+      }
+    } catch (error) {
+      console.error('Error fetching patterns:', error);
+      setError('Failed to fetch symptom patterns');
+    }
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    setIsLoggedIn(false);
+    setUser(null);
+    setToken(null);
+    setSymptoms([]);
+    setCommonPatterns([]);
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+  }, []);
+
+
+
+  const fetchSymptoms = useCallback(
+    async (userId, currentToken) => {
+      try {
+        const response = await fetch(
+          `http://localhost:5000/users/${userId}/symptoms`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${currentToken}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+        if (response.ok) {
+          const data = await response.json();
+          setSymptoms(data);
+        } else {
+          const errorData = await response.json();
+          throw new Error(errorData.message || 'Failed to fetch symptoms');
+        }
+      } catch (error) {
+        console.error('Error fetching symptoms:', error);
+        setError('Failed to fetch symptoms');
+
+        // Handle expired token
+        if (error.message === 'Token has expired') {
+          handleLogout();
+        }
+      }
+    },
+    [handleLogout]
+  );
+
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
     const storedUser = localStorage.getItem('user');
     if (storedToken && storedUser) {
+      const parsedUser = JSON.parse(storedUser);
       setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+      setUser(parsedUser);
       setIsLoggedIn(true);
-      fetchSymptoms(JSON.parse(storedUser).id, storedToken);
     }
   }, []);
 
-  const fetchSymptoms = async (userId, currentToken) => {
-    try {
-      const response = await fetch(
-        `http://localhost:5000/users/${userId}/symptoms`,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${currentToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setSymptoms(data);
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to fetch symptoms');
-      }
-    } catch (error) {
-      console.error('Error fetching symptoms:', error);
-      setError('Failed to fetch symptoms');
-
-      // Handle expired token
-      if (error.message === 'Token has expired') {
-        handleLogout();
-      }
+  useEffect(() => {
+    if (isLoggedIn && user && token) {
+      fetchSymptoms(user.id, token);
+      fetchPatterns();
     }
-  };
+  }, [isLoggedIn, user, token, fetchSymptoms, fetchPatterns]);
+
+
+
+
+
+
+
+
+
+
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -88,6 +144,7 @@ const Dashboard = () => {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         await fetchSymptoms(data.user.id, data.token);
+        await fetchPatterns();
       } else {
         setError(data.message || 'Login failed');
         console.error('Login response:', data);
@@ -120,6 +177,7 @@ const Dashboard = () => {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         fetchSymptoms(data.user.id, data.token);
+        fetchPatterns();
       } else {
         setError(data.message || 'Registration failed');
       }
@@ -129,20 +187,12 @@ const Dashboard = () => {
     }
   };
 
-  const handleLogout = () => {
-    setIsLoggedIn(false);
-    setUser(null);
-    setToken(null);
-    setSymptoms([]);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-  };
+
 
   const handleAddSymptom = async (e) => {
     e.preventDefault();
     setError('');
 
-    // Prevent adding a symptom if in edit mode
     if (isEditing) return;
 
     try {
@@ -155,15 +205,16 @@ const Dashboard = () => {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            label: e.target.label.value,
-            description: e.target.description.value,
+            label: newSymptomData.label,
+            description: newSymptomData.description,
           }),
         }
       );
 
       if (response.ok) {
         fetchSymptoms(user.id, token);
-        e.target.reset();
+        fetchPatterns();
+        setNewSymptomData({ label: '', description: '' }); // Clear the inputs
       } else {
         const data = await response.json();
         throw new Error(data.message || 'Failed to add symptom');
@@ -189,8 +240,8 @@ const Dashboard = () => {
       );
 
       if (response.ok) {
-        // Update the symptoms list by removing the deleted symptom
         setSymptoms(symptoms.filter((symptom) => symptom.id !== symptomId));
+        fetchPatterns();
       } else {
         const data = await response.json();
         throw new Error(data.message || 'Failed to delete symptom');
@@ -227,13 +278,13 @@ const Dashboard = () => {
       );
 
       if (response.ok) {
-        // Update the symptom in the state
         const updatedSymptoms = symptoms.map((symptom) =>
           symptom.id === editSymptomData.id ? editSymptomData : symptom
         );
         setSymptoms(updatedSymptoms);
         setIsEditing(false);
         setEditSymptomData({ id: null, label: '', description: '' });
+        fetchPatterns();
       } else {
         const data = await response.json();
         throw new Error(data.message || 'Failed to update symptom');
@@ -426,6 +477,7 @@ const Dashboard = () => {
     <div
       style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}
     >
+      {/* Header */}
       <header
         style={{
           display: 'flex',
@@ -462,6 +514,7 @@ const Dashboard = () => {
         </div>
       </header>
 
+{/* Error Message */}
       {error && (
         <div
           style={{
@@ -476,6 +529,7 @@ const Dashboard = () => {
         </div>
       )}
 
+      {/* Main Content */}
       <div
         style={{
           display: 'grid',
@@ -510,12 +564,19 @@ const Dashboard = () => {
               style={{ padding: '8px', marginBottom: '10px' }}
               required
               value={
-                isEditing ? editSymptomData.label : undefined
+                isEditing
+                  ? editSymptomData.label
+                  : newSymptomData.label
               }
               onChange={(e) => {
                 if (isEditing) {
                   setEditSymptomData({
                     ...editSymptomData,
+                    label: e.target.value,
+                  });
+                } else {
+                  setNewSymptomData({
+                    ...newSymptomData,
                     label: e.target.value,
                   });
                 }
@@ -531,12 +592,19 @@ const Dashboard = () => {
               }}
               required
               value={
-                isEditing ? editSymptomData.description : undefined
+                isEditing
+                  ? editSymptomData.description
+                  : newSymptomData.description
               }
               onChange={(e) => {
                 if (isEditing) {
                   setEditSymptomData({
                     ...editSymptomData,
+                    description: e.target.value,
+                  });
+                } else {
+                  setNewSymptomData({
+                    ...newSymptomData,
                     description: e.target.value,
                   });
                 }
@@ -591,9 +659,7 @@ const Dashboard = () => {
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
           }}
         >
-          <h2 style={{ marginBottom: '20px' }}>
-            Your Symptoms
-          </h2>
+          <h2 style={{ marginBottom: '20px' }}>Your Symptoms</h2>
           <div
             style={{
               display: 'flex',
@@ -611,9 +677,7 @@ const Dashboard = () => {
                   border: '1px solid #dee2e6',
                 }}
               >
-                <h3 style={{ marginBottom: '5px' }}>
-                  {symptom.label}
-                </h3>
+                <h3 style={{ marginBottom: '5px' }}>{symptom.label}</h3>
                 <p
                   style={{
                     color: '#6c757d',
@@ -641,9 +705,7 @@ const Dashboard = () => {
                     Edit
                   </button>
                   <button
-                    onClick={() =>
-                      handleDeleteSymptom(symptom.id)
-                    }
+                    onClick={() => handleDeleteSymptom(symptom.id)}
                     style={{
                       padding: '5px 10px',
                       backgroundColor: '#dc3545',
@@ -669,6 +731,63 @@ const Dashboard = () => {
               </p>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Most Common Symptom Patterns */}
+      <div
+        style={{
+          padding: '20px',
+          backgroundColor: 'white',
+          borderRadius: '4px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          marginTop: '20px',
+        }}
+      >
+        <h2 style={{ marginBottom: '20px' }}>
+          Most Common Symptom Patterns
+        </h2>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          }}
+        >
+          {commonPatterns.length > 0 ? (
+            commonPatterns.map((pattern, index) => (
+              <div
+                key={index}
+                style={{
+                  padding: '15px',
+                  backgroundColor: '#f8f9fa',
+                  borderRadius: '4px',
+                  border: '1px solid #dee2e6',
+                }}
+              >
+                <h3 style={{ marginBottom: '5px' }}>
+                  Pattern {index + 1} (Reported {pattern.count} times)
+                </h3>
+                <p
+                  style={{
+                    color: '#6c757d',
+                    marginBottom: '5px',
+                  }}
+                >
+                  Symptoms: {pattern.symptoms.join(', ')}
+                </p>
+              </div>
+            ))
+          ) : (
+            <p
+              style={{
+                textAlign: 'center',
+                color: '#6c757d',
+              }}
+            >
+              No common patterns found
+            </p>
+          )}
         </div>
       </div>
     </div>

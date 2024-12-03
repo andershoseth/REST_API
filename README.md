@@ -1,4 +1,4 @@
-Implementation of a REST api with a simple frontend for the assignment REST API:  Building a Scalable RESTful Web Service with Advanced Features
+Implementation of a REST api with a simple frontend for the assignment "REST API:  Building a Scalable RESTful Web Service with Advanced Features"
 
 Components:
     Flask backend (Python)

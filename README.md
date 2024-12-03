@@ -5,6 +5,7 @@ Components:
     React frontend (Javascript)
 
 Usage:
+
     Backend:
         Navigate to "REST_API\registration_app"
         "pip install requirements.txt" to get all dependencies
